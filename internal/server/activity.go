@@ -74,7 +74,7 @@ func (s *Server) activityHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	a, err := s.computeActivity(r.Context(), days)
+	a, err := s.ComputeActivity(r.Context(), days)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -93,7 +93,9 @@ func (s *Server) activityHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(body)
 }
 
-func (s *Server) computeActivity(ctx context.Context, days int) (*Activity, error) {
+// ComputeActivity gathers live activity for the last days days. It backs both the site's own
+// activity tab and the agent API's /api/v1/activity.
+func (s *Server) ComputeActivity(ctx context.Context, days int) (*Activity, error) {
 	now := time.Now()
 	since := now.Add(-time.Duration(days) * 24 * time.Hour)
 	t0 := since.Unix() / 3600 * 3600

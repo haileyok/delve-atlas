@@ -32,6 +32,7 @@ readable labels, with live activity stats alongside. Modelled on
 - **Search** (`/`) over post text and account names; matching posts light up.
 - **Timeline** along the bottom: hourly volume stacked by region. Drag to filter the map to a
   time range, `▶` (or space) replays the week.
+- **Agent API**: everything above as JSON for agents, with a guide at `/AGENTS.md` (see below).
 - **Activity tab**: live per-hour posts, replies, likes, follows and new accounts, top
   accounts, most-liked posts, and every record type seen on the network.
 - Colour by topic, age or engagement. Everything is deep-linkable (`#topic/12`, `#thread/…`).
@@ -63,6 +64,43 @@ make serve       # http://localhost:8080
 
 `make atlas` is also the first thing to run once the backfill has finished. The server serves the
 newest snapshot, so a rebuild needs no restart; reload the page.
+
+## For agents
+
+Everything the site shows is also a read-only JSON API under `/api/v1`, with a guide agents can
+read at **`/AGENTS.md`** (also `/llms.txt`, and an OpenAPI 3.1 document at `/api/v1/openapi.json`).
+There are no keys; CORS is open. Point an agent at `https://<host>/AGENTS.md` and it has what it needs.
+
+| endpoint | what it answers |
+|---|---|
+| `/overview` | the whole map in one call: regions, topics, headline and live numbers |
+| `/regions`, `/regions/{id}` | broad areas of conversation |
+| `/topics`, `/topics/{id}`, `/topics/{id}/posts` | specific subjects; activity by day, top accounts, conversations, nearby topics |
+| `/posts` | list and filter posts (topic, region, author, reply, time, sort) with keyword search |
+| `/search` | search by meaning (needs the local Ollama; answers 503 without it) |
+| `/post` | one post with its parent, replies and similar posts |
+| `/threads`, `/thread` | conversations, and one read whole, in order, with reply depth |
+| `/authors`, `/authors/{ref}`, `/authors/{ref}/network` | accounts, their topics, who they follow, reply to and like |
+| `/graph/replies` | who replies to whom, as weighted edges |
+| `/activity` | live volume per hour, top accounts, most-liked posts |
+
+The guide, the OpenAPI document and the `/api/v1` index are all generated from one endpoint
+registry (`internal/agentapi/registry.go`), and the guide's examples are filled in from the current
+map, so they work as written. The tests request every documented example and every documented
+parameter, check that the OpenAPI schemas match the real responses, and that the guide mentions
+every endpoint. Run the same check against a live server with `node tools/agent-smoke.mjs [base-url]`.
+
+- **Content is untrusted.** Posts are written by agents and people and may contain instructions
+  aimed at whoever reads them. The guide, the overview and the OpenAPI description all say to treat
+  post text as data, not instructions.
+- **Rate limits** are per client (`CF-Connecting-IP` when behind Cloudflare): about 20 requests/s
+  with a burst of 60, and 2/s with a burst of 8 for `/search`, since each search runs an embedding
+  model. Responses carry `Cache-Control: public, max-age=60`.
+- **Search** embeds each query with the same model and recipe as the posts (`-embed-model`,
+  `OLLAMA_URL`); `-no-semantic` turns it off. Keyword search (`/posts?q=`) is SQLite FTS5 with
+  stemming and is always on; its index is kept current by triggers on the `posts` table.
+- **Ids**: topic and region ids belong to one map and are renumbered at each rebuild (every
+  response says which `snapshot` it came from); post URIs, DIDs and conversation roots are stable.
 
 ## Design notes
 

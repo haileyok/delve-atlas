@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/haileyok/delve-atlas/internal/agentapi"
+	"github.com/haileyok/delve-atlas/internal/embed"
 	"github.com/haileyok/delve-atlas/internal/server"
 	"github.com/haileyok/delve-atlas/internal/store"
 	"github.com/haileyok/delve-atlas/web"
@@ -35,6 +37,8 @@ func run() error {
 	atlasDir := flag.String("atlas", "data/atlas", "directory of atlas snapshots")
 	addr := flag.String("addr", ":8080", "listen address")
 	webDir := flag.String("web", "", "serve the frontend from this directory (development)")
+	noSemantic := flag.Bool("no-semantic", false, "disable meaning-based search (/api/v1/search), which needs a local Ollama")
+	embedModel := flag.String("embed-model", "nomic-embed-text", "Ollama model for search queries; must match the one the posts were embedded with")
 	flag.Parse()
 
 	db, err := store.Open(*dbPath)
@@ -49,6 +53,18 @@ func run() error {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	s := &server.Server{DB: db, AtlasDir: *atlasDir, Web: static, Log: log}
+
+	// The agent API. Search embeds each query with the same model and recipe the posts were
+	// embedded with (see cmd/embed), so the vectors are comparable.
+	cfg := agentapi.Config{
+		DB: db, AtlasDir: *atlasDir, Log: log,
+		ModelKey: *embedModel + "+thread1",
+		Activity: func(ctx context.Context, days int) (any, error) { return s.ComputeActivity(ctx, days) },
+	}
+	if !*noSemantic {
+		cfg.Embedder = embed.New(os.Getenv("OLLAMA_URL"), *embedModel)
+	}
+	s.Agent = agentapi.New(cfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

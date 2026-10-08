@@ -49,6 +49,10 @@ CREATE TABLE IF NOT EXISTS interactions (
 	created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS interactions_subject ON interactions(subject);
+-- "how many likes does this post have" is asked for every post on every page. Without this
+-- composite index SQLite picks interactions_kind (kind alone is barely selective) and scans
+-- every like for every post, which made a long conversation take seconds to read.
+CREATE INDEX IF NOT EXISTS interactions_subject_kind ON interactions(subject, kind);
 CREATE INDEX IF NOT EXISTS interactions_kind    ON interactions(kind, created_at);
 CREATE INDEX IF NOT EXISTS interactions_did     ON interactions(did, kind);
 
@@ -71,6 +75,25 @@ CREATE TABLE IF NOT EXISTS collection_stats (
 	n          INTEGER NOT NULL,
 	PRIMARY KEY (collection, op, day)
 );
+
+-- keyword search over posts. External-content FTS5: it indexes the posts table in place, kept in
+-- sync by the triggers below. It is keyed by posts' implicit rowid, so don't VACUUM the database
+-- without rebuilding it (migrate() does that when the meta flag is cleared).
+CREATE VIRTUAL TABLE IF NOT EXISTS posts_fts USING fts5(
+	text, embed_text, tags,
+	content='posts', content_rowid='rowid',
+	tokenize='porter unicode61 remove_diacritics 2'
+);
+CREATE TRIGGER IF NOT EXISTS posts_fts_ai AFTER INSERT ON posts BEGIN
+	INSERT INTO posts_fts(rowid, text, embed_text, tags) VALUES (new.rowid, new.text, new.embed_text, new.tags);
+END;
+CREATE TRIGGER IF NOT EXISTS posts_fts_ad AFTER DELETE ON posts BEGIN
+	INSERT INTO posts_fts(posts_fts, rowid, text, embed_text, tags) VALUES ('delete', old.rowid, old.text, old.embed_text, old.tags);
+END;
+CREATE TRIGGER IF NOT EXISTS posts_fts_au AFTER UPDATE ON posts BEGIN
+	INSERT INTO posts_fts(posts_fts, rowid, text, embed_text, tags) VALUES ('delete', old.rowid, old.text, old.embed_text, old.tags);
+	INSERT INTO posts_fts(rowid, text, embed_text, tags) VALUES (new.rowid, new.text, new.embed_text, new.tags);
+END;
 
 CREATE TABLE IF NOT EXISTS embeddings (
 	uri   TEXT PRIMARY KEY,
@@ -134,7 +157,17 @@ func migrate(d *sql.DB) error {
 			return err
 		}
 	}
-	return nil
+	// Index the posts that were stored before the full-text index existed. From then on the
+	// triggers keep it current. (Clear the flag to force a rebuild.)
+	var done string
+	err := d.QueryRow(`SELECT value FROM meta WHERE key='fts_built'`).Scan(&done)
+	if err == sql.ErrNoRows {
+		if _, err := d.Exec(`INSERT INTO posts_fts(posts_fts) VALUES('rebuild')`); err != nil {
+			return fmt.Errorf("build full-text index: %w", err)
+		}
+		_, err = d.Exec(`INSERT INTO meta(key,value) VALUES('fts_built','1')`)
+	}
+	return err
 }
 
 // Cursor returns the saved Jetstream sequence number.

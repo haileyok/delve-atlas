@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/haileyok/delve-atlas/internal/agentapi"
 	"github.com/haileyok/delve-atlas/internal/store"
 )
 
@@ -27,6 +28,9 @@ type Server struct {
 	AtlasDir string
 	Web      fs.FS
 	Log      *slog.Logger
+	// Agent, when set, serves the documented JSON API for agents (/api/v1/*), /AGENTS.md and
+	// /llms.txt.
+	Agent *agentapi.API
 
 	mu       sync.Mutex
 	activity cached
@@ -55,6 +59,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/thread", s.thread)
 	mux.HandleFunc("GET /api/activity", s.activityHandler)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok") })
+	if s.Agent != nil {
+		s.Agent.Register(mux)
+	}
 	mux.Handle("/", s.static())
 	return gzipMW(mux)
 }
