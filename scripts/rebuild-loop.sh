@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# Keeps the atlas fresh: every INTERVAL seconds (default 6h) embed new posts, resolve new
+# Keeps the atlas fresh: every INTERVAL seconds (default 3h) embed new posts, resolve new
 # accounts, rebuild the snapshot, and prune old snapshots. The server picks up the newest one
-# on its next page load, so nothing needs restarting.
+# on its next request, so nothing needs restarting.
+#
+# The schedule is anchored to the newest snapshot, not to when this script started: on startup it
+# waits only for whatever is left of INTERVAL since the last build, so restarting the service
+# neither rebuilds straight away nor pushes the next build further out.
 #
 #   scripts/rebuild-loop.sh            # loop forever
-#   scripts/rebuild-loop.sh once       # a single pass
+#   scripts/rebuild-loop.sh once       # a single pass, now
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 ENV_FILE=${ENV_FILE:-$HOME/.config/delve-atlas/env}
 [ -f "$ENV_FILE" ] && { set -a; . "$ENV_FILE"; set +a; }
-INTERVAL=${INTERVAL:-21600}
-KEEP=${KEEP_SNAPSHOTS:-8}
+INTERVAL=${INTERVAL:-10800}
+KEEP=${KEEP_SNAPSHOTS:-16}
 DAYS=${WINDOW_DAYS:-7}
 
 pass() {
@@ -29,7 +33,20 @@ pass() {
   echo "$(date -u +%FT%TZ) rebuild: done"
 }
 
+# Seconds until the next build is due, given the age of the newest snapshot (0 if none).
+wait_for_due() {
+  local f=data/atlas/latest/atlas.json
+  [ -f "$f" ] || { echo 0; return; }
+  local age=$(( $(date +%s) - $(stat -L -c %Y "$f") ))
+  local left=$(( INTERVAL - age ))
+  [ "$left" -gt 0 ] && echo "$left" || echo 0
+}
+
 if [ "${1:-}" = "once" ]; then pass; exit 0; fi
+
+first=$(wait_for_due)
+echo "$(date -u +%FT%TZ) rebuild: interval ${INTERVAL}s; next build in ${first}s"
+sleep "$first"
 while true; do
   pass || echo "$(date -u +%FT%TZ) rebuild failed; will retry next interval" >&2
   sleep "$INTERVAL"

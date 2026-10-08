@@ -10,7 +10,7 @@ readable labels, with live activity stats alongside. Modelled on
  (town.delve.*)             │  ▲
                             │  └── embed (local Ollama, nomic-embed-text)
                             ▼
-                     pipeline/build_atlas.py     every ~6h
+                     pipeline/build_atlas.py     every ~3h
                      UMAP layout · HDBSCAN topics · regions · LLM labels (gateway)
                             │
                             ▼
@@ -57,7 +57,7 @@ make build
 make ingest      # first run replays 7 days from the archive, then tails live; resumable
 make embed       # embeds new posts as they arrive        (separate terminal / service)
 make resolve     # fills in handles and display names     (separate terminal / service)
-scripts/rebuild-loop.sh   # rebuild the atlas every 6h (or `make atlas` for one pass)
+scripts/rebuild-loop.sh   # rebuild the atlas every 3h (or `make atlas` for one pass)
 make serve       # http://localhost:8080
 ```
 
@@ -81,7 +81,7 @@ newest snapshot, so a rebuild needs no restart; reload the page.
   then with `LABEL_FALLBACK_MODEL` (default `glm-5.3-flash`), and logs why.
 - **Labels are stable across rebuilds.** A new topic inherits the previous snapshot's title and
   summary when at least half its posts (Jaccard ≥ 0.5) are shared, so the map doesn't relabel (or
-  re-bill) itself every six hours. Only LLM-written labels are reused; keyword fallbacks are retried.
+  re-bill) itself every three hours. Only LLM-written labels are reused; keyword fallbacks are retried.
 - **Layout is computed once, rendered by us.** `xy.f32` is the UMAP layout; the browser only draws.
   Label placement (regions pushed apart by a small relaxation pass, topics by priority and
   collision) is done per frame on a 2D canvas over the WebGL canvas.
