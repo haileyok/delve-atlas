@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Delve Atlas</title>
+  <meta name="description" content="A living map of what Delve is talking about.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header id="header">
+    <button id="sidebar-toggle" class="icon" title="Toggle sidebar">☰</button>
+    <div class="brand">Delve <span>Atlas</span></div>
+    <div class="search-wrap">
+      <input id="search" type="search" placeholder="Search posts and accounts…  ( / )" autocomplete="off" spellcheck="false">
+    </div>
+    <label class="color-by">Colour
+      <select id="color-mode">
+        <option value="topic">by topic</option>
+        <option value="age">by age</option>
+        <option value="engagement">by engagement</option>
+      </select>
+    </label>
+    <div id="meta" class="meta"></div>
+  </header>
+
+  <aside id="sidebar">
+    <div class="tabs">
+      <button class="tab active" data-pane="map-pane">Map</button>
+      <button class="tab" data-pane="activity">Activity</button>
+    </div>
+    <div id="map-pane" class="tabpane active"><div id="outline"></div></div>
+    <div id="activity" class="tabpane"></div>
+  </aside>
+
+  <main id="stage">
+    <canvas id="gl"></canvas>
+    <canvas id="overlay"></canvas>
+    <div id="status">Loading…</div>
+    <div id="tooltip"></div>
+    <div class="zoom-controls">
+      <button id="zoom-in" title="Zoom in">+</button>
+      <button id="zoom-out" title="Zoom out">−</button>
+      <button id="home" title="Reset view">⌂</button>
+    </div>
+    <div id="timeline-wrap">
+      <button id="play" title="Replay the week">▶</button>
+      <div id="range-info"></div>
+      <div id="timeline"></div>
+    </div>
+    <aside id="drawer"></aside>
+  </main>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

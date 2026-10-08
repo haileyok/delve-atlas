@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS actors (
 	description  TEXT NOT NULL DEFAULT '',
 	first_seen   INTEGER NOT NULL,
 	active       INTEGER NOT NULL DEFAULT 1,
-	status       TEXT NOT NULL DEFAULT ''
+	status       TEXT NOT NULL DEFAULT '',
+	resolved_at  INTEGER NOT NULL DEFAULT 0
 );
 
 -- every collection and operation seen, per UTC day, so we know what exists on the network
@@ -100,7 +101,40 @@ func Open(path string) (*DB, error) {
 		d.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	if err := migrate(d); err != nil {
+		d.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	return &DB{d}, nil
+}
+
+// migrate adds columns that older databases lack.
+func migrate(d *sql.DB) error {
+	has := func(table, col string) (bool, error) {
+		rows, err := d.Query(`SELECT name FROM pragma_table_info(?)`, table)
+		if err != nil {
+			return false, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var n string
+			if err := rows.Scan(&n); err != nil {
+				return false, err
+			}
+			if n == col {
+				return true, nil
+			}
+		}
+		return false, rows.Err()
+	}
+	if ok, err := has("actors", "resolved_at"); err != nil {
+		return err
+	} else if !ok {
+		if _, err := d.Exec(`ALTER TABLE actors ADD COLUMN resolved_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Cursor returns the saved Jetstream sequence number.

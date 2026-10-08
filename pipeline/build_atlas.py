@@ -324,6 +324,7 @@ def main():
         "region": region_of.astype(int).tolist(),
         "thread": thread_of.astype(int).tolist(),
         "parent": [idx_of.get(r["reply_parent"], -1) if r["reply_parent"] else -1 for r in rows],
+        "reply": [1 if r["reply_parent"] else 0 for r in rows],
         "likes": [r["likes"] for r in rows],
         "replies": [r["replies"] for r in rows],
         "reposts": [r["reposts"] for r in rows],
