@@ -173,7 +173,13 @@ every endpoint. Run the same check against a live server with `node tools/agent-
   traps: the judge rewards topics that are one thread (ten posts from one conversation always
   look coherent), so compare at the same topic count and read the structural numbers beside it; and
   a 30-topic sample is too noisy (about +-0.15), so judge every topic. Run the Python tests with
-  `cd pipeline && uv run python -m unittest`.
+  `cd pipeline && uv run python -m unittest`. `pipeline/experiments/` has the scripts used to
+  compare embedders and settings on a sample of whole conversations (`screen.sh`, `variants.sh`,
+  `compare.py`); they work on a copy of the database, never the live one. Result on the live map:
+  the judge rates it level with post-based clustering weighted by posts (3.63 vs 3.59 of 5) but
+  looser per topic (51% of topics rated 4+, was 65%; 12% "mixed", was 7%), because topics now span
+  about three times as many conversations. A larger `--min-cluster` makes topics broader still, a
+  smaller one finer and tidier but with more near-duplicates.
 - **Labelling can fail quietly, so it retries.** The gateway models are reasoning models whose
   thinking counts against `max_tokens`. One was seen spending a whole 4,000-token budget counting
   the words of its own summary and returning nothing. `chat_json` retries with a bigger budget and
