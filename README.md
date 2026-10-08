@@ -100,8 +100,8 @@ node tools/cdp.mjs tools/scenarios/drawers.mjs
 node tools/cdp.mjs tools/scenarios/labels.mjs
 ```
 
-`tools/scenarios/mobile.mjs` does the same at a phone-sized viewport, and `tools/scenarios/align.mjs`
-reads back the rendered pixels to check the dots sit where the labels and hover think they do.
+`tools/scenarios/mobile.mjs` does the same at a phone-sized viewport, and `tools/scenarios/align.mjs` / `align-dynamic.mjs`
+read back the rendered pixels to check the dots sit where the labels and hover think they do.
 `tools/shot.sh out.png [path] [WxH]` takes a screenshot. Both find a nix-built Chromium
 (`nix build nixpkgs#chromium --no-link --print-out-paths`) or use `$CHROMIUM`.
 

@@ -3,12 +3,15 @@ package server
 
 import (
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -52,16 +55,27 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/thread", s.thread)
 	mux.HandleFunc("GET /api/activity", s.activityHandler)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok") })
-	mux.Handle("/", staticCache(http.FileServerFS(s.Web)))
+	mux.Handle("/", s.static())
 	return gzipMW(mux)
 }
 
-// staticCache lets browsers reuse the site's own files for a few minutes (the embedded files
-// carry no modification time, so they would otherwise be refetched on every load).
-func staticCache(next http.Handler) http.Handler {
+// static serves the site's own files. They are revalidated on every load with a content-hash
+// ETag, so a deploy reaches browsers (and any CDN in front) on the next reload: the page's
+// modules (main.js, gl.js, ...) must never be a mix of old and new. Unchanged files answer 304.
+func (s *Server) static() http.Handler {
+	files := http.FileServerFS(s.Web)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "public, max-age=300")
-		next.ServeHTTP(w, r)
+		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+		if name == "" {
+			name = "index.html"
+		}
+		if b, err := fs.ReadFile(s.Web, name); err == nil {
+			sum := sha256.Sum256(b)
+			// weak, because the body may be sent gzip-compressed
+			w.Header().Set("ETag", `W/"`+hex.EncodeToString(sum[:8])+`"`)
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+		files.ServeHTTP(w, r)
 	})
 }
 
@@ -191,31 +205,60 @@ func (s *Server) thread(w http.ResponseWriter, r *http.Request) {
 
 // ---- gzip
 
+// gzipWriter compresses a response once its status is known. Responses that must not have a
+// body (304, 204, 1xx) and HEAD requests are passed through untouched.
 type gzipWriter struct {
 	http.ResponseWriter
-	gz *gzip.Writer
+	gz    *gzip.Writer
+	wrote bool
+	enc   bool
+	head  bool
 }
 
-func (g gzipWriter) Write(b []byte) (int, error) { return g.gz.Write(b) }
-
-// WriteHeader drops any Content-Length (ServeContent sets the uncompressed size).
-func (g gzipWriter) WriteHeader(code int) {
-	g.Header().Del("Content-Length")
+func (g *gzipWriter) WriteHeader(code int) {
+	if g.wrote {
+		return
+	}
+	g.wrote = true
+	bodyless := code < 200 || code == http.StatusNoContent || code == http.StatusNotModified || g.head
+	if !bodyless && g.Header().Get("Content-Encoding") == "" {
+		g.Header().Set("Content-Encoding", "gzip")
+		g.Header().Del("Content-Length") // ServeContent sets the uncompressed size
+		g.enc = true
+	}
 	g.ResponseWriter.WriteHeader(code)
+}
+
+func (g *gzipWriter) Write(b []byte) (int, error) {
+	if !g.wrote {
+		g.WriteHeader(http.StatusOK)
+	}
+	if !g.enc {
+		return g.ResponseWriter.Write(b)
+	}
+	if g.gz == nil {
+		g.gz = gzip.NewWriter(g.ResponseWriter)
+	}
+	return g.gz.Write(b)
+}
+
+func (g *gzipWriter) close() {
+	if g.gz != nil {
+		g.gz.Close()
+	}
 }
 
 func gzipMW(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Range requests (the binary layout file) and clients without gzip pass through.
+		w.Header().Add("Vary", "Accept-Encoding")
+		// Range requests and clients without gzip pass through; so do formats that don't shrink.
 		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") || r.Header.Get("Range") != "" ||
 			strings.HasSuffix(r.URL.Path, ".f32") || strings.HasSuffix(r.URL.Path, ".png") {
 			next.ServeHTTP(w, r)
 			return
 		}
-		w.Header().Set("Content-Encoding", "gzip")
-		w.Header().Add("Vary", "Accept-Encoding")
-		gz := gzip.NewWriter(w)
-		defer gz.Close()
-		next.ServeHTTP(gzipWriter{ResponseWriter: w, gz: gz}, r)
+		g := &gzipWriter{ResponseWriter: w, head: r.Method == http.MethodHead}
+		defer g.close()
+		next.ServeHTTP(g, r)
 	})
 }

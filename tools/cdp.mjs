@@ -19,7 +19,7 @@ function findChromium() {
   throw new Error('set CHROMIUM');
 }
 
-export async function withPage(fn, { width = 1600, height = 900 } = {}) {
+export async function withPage(fn, { width = 1600, height = 900, dpr = 1 } = {}) {
   const profile = mkdtempSync(join(tmpdir(), 'cdp-'));
   const port = 9300 + Math.floor(Math.random() * 500);
   const proc = spawn(findChromium(), [
@@ -53,7 +53,7 @@ export async function withPage(fn, { width = 1600, height = 900 } = {}) {
       ws.send(JSON.stringify({ id: i, method, params }));
     });
     await send('Runtime.enable'); await send('Page.enable'); await send('Log.enable');
-    await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+    await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: dpr, mobile: false });
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const page = {
       logs,
