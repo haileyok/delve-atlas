@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -114,6 +115,67 @@ func TestPendingEmbeddingsAddThreadContextToReplies(t *testing.T) {
 	}
 	if got, _ := db.PendingEmbeddings(ctx, "m2", 0, 10); len(got) != 2 {
 		t.Errorf("a new model key re-queues everything, got %d", len(got))
+	}
+}
+
+func TestEmbeddingsOfDifferentModelsCoexist(t *testing.T) {
+	t.Parallel()
+	db, ctx := open(t), context.Background()
+	uris := []string{"at://a/p/1"}
+	if err := db.PutEmbeddings(ctx, "m1", 1, uris, [][]byte{{1, 0, 0, 0}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.PutEmbeddings(ctx, "m2", 1, uris, [][]byte{{2, 0, 0, 0}}); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	db.QueryRow(`SELECT count(*) FROM embeddings WHERE uri = ?`, uris[0]).Scan(&n)
+	if n != 2 {
+		t.Fatalf("a post should hold one vector per model, found %d rows", n)
+	}
+	// Writing the same model again replaces its own vector only.
+	if err := db.PutEmbeddings(ctx, "m1", 1, uris, [][]byte{{3, 0, 0, 0}}); err != nil {
+		t.Fatal(err)
+	}
+	db.QueryRow(`SELECT count(*) FROM embeddings WHERE uri = ?`, uris[0]).Scan(&n)
+	if n != 2 {
+		t.Fatalf("re-embedding with the same model should replace, found %d rows", n)
+	}
+}
+
+func TestOpenMigratesEmbeddingsKeyedByPostAlone(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "old.db")
+	// A database as older versions made it: one embedding per post.
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE embeddings (uri TEXT PRIMARY KEY, model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL);
+		INSERT INTO embeddings VALUES ('at://a/p/1', 'old-model', 1, x'01000000'), ('at://a/p/2', 'old-model', 1, x'02000000')`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	for round := 0; round < 2; round++ { // a second Open must find nothing left to do
+		db, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var n int
+		db.QueryRow(`SELECT count(*) FROM embeddings WHERE model = 'old-model'`).Scan(&n)
+		if n != 2 {
+			t.Fatalf("round %d: existing vectors should survive the migration, found %d", round, n)
+		}
+		if err := db.PutEmbeddings(context.Background(), "new-model", 1, []string{"at://a/p/1"}, [][]byte{{9, 0, 0, 0}}); err != nil {
+			t.Fatal(err)
+		}
+		db.QueryRow(`SELECT count(*) FROM embeddings`).Scan(&n)
+		if n != 3 {
+			t.Fatalf("round %d: a second model's vector should sit beside the first, found %d rows", round, n)
+		}
+		db.Exec(`DELETE FROM embeddings WHERE model = 'new-model'`)
+		db.Close()
 	}
 }
 

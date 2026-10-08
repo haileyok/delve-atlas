@@ -24,7 +24,14 @@ pass() {
   echo "$(date -u +%FT%TZ) rebuild: embedding"
   ./bin/embed -db data/delve.db -days "$DAYS"
   echo "$(date -u +%FT%TZ) rebuild: building atlas"
-  (cd pipeline && uv run python build_atlas.py --db ../data/delve.db --out ../data/atlas --days "$DAYS" --workers 16 2> >(grep -v -i -E 'warn|n_jobs' >&2))
+  (cd pipeline && uv run python build_atlas.py --db ../data/delve.db --out ../data/atlas --days "$DAYS" --workers 16 --prune-unit-cache 2> >(grep -v -i -E 'warn|n_jobs' >&2))
+  # The link-preview card is drawn from the newest map by the running server's /og/card.html in
+  # headless Chromium. If that fails the site keeps showing the previous card.
+  if [ -f tools/og.mjs ] && command -v node >/dev/null; then
+    echo "$(date -u +%FT%TZ) rebuild: rendering the link-preview card"
+    node tools/og.mjs --base "${OG_BASE:-http://127.0.0.1:8088}" --out data/atlas/latest/og.jpg \
+      || echo "$(date -u +%FT%TZ) rebuild: card render failed; the previous card stays" >&2
+  fi
   # keep the newest $KEEP snapshots (never the one `latest` points at)
   latest=$(readlink data/atlas/latest || true)
   ls -1d data/atlas/2*Z 2>/dev/null | sort | head -n -"$KEEP" | while read -r d; do

@@ -29,7 +29,7 @@ from pathlib import Path
 
 import numpy as np
 
-MODEL_KEY = "nomic-embed-text+thread1"
+MODEL_KEY = "nomic-embed-text+thread1"  # default; --model overrides
 
 
 def log(*a):
@@ -39,7 +39,7 @@ def log(*a):
 # --------------------------------------------------------------------------- loading
 
 
-def load(db_path: str, days: float):
+def load(db_path: str, days: float, model_key: str = MODEL_KEY):
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
     cutoff = int((time.time() - days * 86400) * 1000)
@@ -47,6 +47,7 @@ def load(db_path: str, days: float):
         """
         SELECT p.uri, p.did, p.text, p.embed_text, p.created_at, p.reply_parent, p.reply_root,
                p.embed_kind, p.link_url, p.n_images, e.vec,
+               COALESCE((SELECT r.text FROM posts r WHERE r.uri = p.reply_root AND p.reply_root <> p.uri), '') AS root_text,
                (SELECT count(*) FROM interactions i WHERE i.subject = p.uri AND i.kind = 'like')   AS likes,
                (SELECT count(*) FROM interactions i WHERE i.subject = p.uri AND i.kind = 'repost') AS reposts,
                (SELECT count(*) FROM posts c WHERE c.reply_parent = p.uri)                         AS replies
@@ -54,7 +55,7 @@ def load(db_path: str, days: float):
         WHERE p.created_at >= ?
         ORDER BY p.created_at
         """,
-        (MODEL_KEY, cutoff),
+        (model_key, cutoff),
     ).fetchall()
     actors = {
         r["did"]: dict(r)
@@ -82,14 +83,17 @@ def umap_embed(X, n_components, n_neighbors, min_dist, seed=42):
     ).fit_transform(X)
 
 
-def cluster(Z, min_cluster_size, min_samples, attach=1.5):
+def cluster(Z, min_cluster_size, min_samples, attach=1.5, selection="leaf"):
     from sklearn.cluster import HDBSCAN
 
     labels = HDBSCAN(
         min_cluster_size=min_cluster_size,
         min_samples=min_samples,
-        cluster_selection_method="leaf",
+        cluster_selection_method=selection,
+        copy=True,
     ).fit_predict(Z)
+    if attach <= 0:
+        return labels
     # Attach noise points to the nearest topic when they are reasonably close to it; the rest
     # stay unclustered (-1) so they don't distort a topic's meaning.
     ids = sorted(set(labels) - {-1})
@@ -104,6 +108,26 @@ def cluster(Z, min_cluster_size, min_samples, attach=1.5):
         k = int(d.argmin())
         if d[k] <= limit[ids[k]]:
             out[j] = ids[k]
+    return out
+
+
+def attach_by_similarity(V, labels, pct=10.0, slack=0.0):
+    """Give each unclustered row to the topic whose centre it is most like, in the full embedding
+    space, if it is at least as close to that centre as the topic's own `pct`-th percentile
+    member (the less typical ones), less `slack`. Rows nothing is close to stay unclustered (-1)."""
+    ids = sorted(set(labels) - {-1})
+    if not ids:
+        return labels
+    cent = np.stack([V[labels == i].mean(0) for i in ids])
+    cent /= np.maximum(np.linalg.norm(cent, axis=1, keepdims=True), 1e-9)
+    need = np.array([np.percentile(V[labels == i] @ cent[k], pct) for k, i in enumerate(ids)])
+    out = labels.copy()
+    noise = np.where(labels == -1)[0]
+    if len(noise):
+        S = V[noise] @ cent.T
+        best = S.argmax(1)
+        ok = S[np.arange(len(noise)), best] >= need[best] - slack
+        out[noise[ok]] = np.array(ids)[best[ok]]
     return out
 
 
@@ -253,11 +277,25 @@ def main():
     ap.add_argument("--regions", type=int, default=0, help="number of regions (0 = auto)")
     ap.add_argument("--min-samples", type=int, default=0, help="HDBSCAN min_samples (0 = auto)")
     ap.add_argument("--attach", type=float, default=4.0, help="attach noise points within this many 90th-percentile radii of a topic")
+    ap.add_argument("--model", default=MODEL_KEY, help="embeddings table model key to cluster")
+    ap.add_argument("--unit", choices=["post", "conversation"], default="conversation",
+                    help="what gets clustered: single posts, or conversations (see conversations.py)")
+    ap.add_argument("--max-posts", type=int, default=20, help="conversation unit: posts before a long thread is split")
+    ap.add_argument("--unit-vectors", choices=["transcript", "pooled"], default="transcript",
+                    help="conversation unit: embed a transcript of its posts, or average the posts' vectors")
+    ap.add_argument("--unit-model", default=os.environ.get("UNIT_MODEL", ""), help="Ollama model for transcripts (default: $UNIT_MODEL, else the --model's)")
+    ap.add_argument("--attach-pct", type=float, default=5.0,
+                    help="conversation unit: an unclustered conversation joins a topic if it is as close to its centre as that percentile of the topic's members")
+    ap.add_argument("--attach-slack", type=float, default=0.05, help="conversation unit: cosine slack on the attach threshold (bigger attaches more)")
+    ap.add_argument("--prune-unit-cache", action="store_true", help="delete cached conversation vectors nothing uses any more")
+    ap.add_argument("--selection", choices=["leaf", "eom"], default="eom",
+                    help="HDBSCAN cluster selection: leaf gives many small topics, eom fewer and broader ones")
+    ap.add_argument("--fill", type=float, default=0.20, help="conversation unit: share of the map the conversations' discs cover")
     ap.add_argument("--no-labels", action="store_true")
     ap.add_argument("--workers", type=int, default=8)
     args = ap.parse_args()
 
-    rows, actors, cutoff, n_follows = load(args.db, args.days)
+    rows, actors, cutoff, n_follows = load(args.db, args.days, args.model)
     n = len(rows)
     log(f"{n} posts with embeddings in the last {args.days} days")
     if n < 30:
@@ -269,20 +307,54 @@ def main():
         X[i] = np.frombuffer(r["vec"], dtype="<f4")
 
     t0 = time.time()
-    log("umap 2d")
-    XY = umap_embed(X, 2, 25, 0.08)
-    log("umap 12d for clustering")
-    Z = umap_embed(X, 12, 20, 0.0)
-    mcs = args.min_cluster or int(np.clip(round(n / 250), 12, 60))
-    log(f"hdbscan min_cluster_size={mcs}")
-    topic_of = cluster(Z, mcs, args.min_samples or max(5, mcs // 8), args.attach)
+    unit_of = unit_members = Zu = topic_u = None
+    if args.unit == "conversation":
+        import conversations as conv
+
+        unit_of, unit_members = conv.segment(rows, args.max_posts)
+        nu = len(unit_members)
+        log(f"{nu} conversation units for {n} posts")
+        if args.unit_vectors == "pooled":
+            UX = conv.pooled_vectors(X, unit_members)
+        else:
+            base = args.unit_model or args.model.split("+")[0]
+            UX = conv.embed_documents(args.db, base, conv.transcripts(rows, unit_members), workers=2,
+                                      prune=args.prune_unit_cache)
+        log("umap 2d (units)")
+        XYu = umap_embed(UX, 2, 15, 0.3)
+        log("umap 12d for clustering (units)")
+        Zu = umap_embed(UX, 12, 15, 0.0)
+        mcs = args.min_cluster or int(np.clip(round(nu / 250), 3, 30))
+        log(f"hdbscan min_cluster_size={mcs} (conversations)")
+        topic_u = cluster(Zu, mcs, args.min_samples or max(3, mcs // 3), 0, args.selection)
+        raw = int((topic_u == -1).sum())
+        topic_u = attach_by_similarity(UX, topic_u, args.attach_pct, args.attach_slack)
+        log(f"{raw} of {nu} conversations unclustered by HDBSCAN, {int((topic_u == -1).sum())} after attaching the similar ones")
+        topic_of = topic_u[unit_of]
+        Z = Zu[unit_of]
+        XYu = XYu - np.median(XYu, axis=0)
+        lo, hi = np.percentile(XYu, 0.5, axis=0), np.percentile(XYu, 99.5, axis=0)
+        XYu = XYu / (float(np.max(hi - lo) / 2) or 1.0)
+        log("laying out conversations")
+        XY, _ = conv.spiral_layout(XYu, unit_members, n, fill=args.fill)
+    else:
+        log("umap 2d")
+        XY = umap_embed(X, 2, 25, 0.08)
+        log("umap 12d for clustering")
+        Z = umap_embed(X, 12, 20, 0.0)
+        mcs = args.min_cluster or int(np.clip(round(n / 250), 12, 60))
+        log(f"hdbscan min_cluster_size={mcs}")
+        topic_of = cluster(Z, mcs, args.min_samples or max(5, mcs // 8), args.attach)
     n_topics = len(set(topic_of) - {-1})
     sizes = sorted(np.bincount(topic_of[topic_of >= 0]).tolist(), reverse=True) if n_topics else []
     log(f"{n_topics} topics, {int((topic_of == -1).sum())} unclustered, {time.time() - t0:.0f}s; "
         f"sizes: max {sizes[:3]} median {sizes[len(sizes) // 2] if sizes else 0} min {sizes[-1] if sizes else 0}")
 
     target_regions = args.regions or int(np.clip(round(np.sqrt(max(n_topics, 1)) * 1.4), 3, 14))
-    region_of_topic = make_regions(Z, topic_of, target_regions)
+    if args.unit == "conversation":
+        region_of_topic = make_regions(Zu, topic_u, target_regions)
+    else:
+        region_of_topic = make_regions(Z, topic_of, target_regions)
     region_of = np.array([region_of_topic.get(int(t), -1) for t in topic_of])
 
     # Normalise the layout into roughly [-1, 1], keeping the aspect ratio.
@@ -340,6 +412,8 @@ def main():
         "reposts": [r["reposts"] for r in rows],
         "kind": [r["embed_kind"] for r in rows],
     }
+    if unit_of is not None:
+        cols["conv"] = unit_of.astype(int).tolist()  # the conversation unit each post was clustered in
 
     # ---- topics
     docs_by_topic = defaultdict(list)
@@ -351,8 +425,19 @@ def main():
     topics = []
     for t in sorted(set(topic_of) - {-1}):
         m = np.where(topic_of == t)[0]
-        cent_z = Z[m].mean(0)
-        order = m[np.argsort(np.linalg.norm(Z[m] - cent_z, axis=1))]
+        if args.unit == "conversation":
+            # Representative posts: the opening post of each of the conversations nearest the
+            # topic's centre, so the examples are different conversations, not one long thread.
+            us = np.where(topic_u == t)[0]
+            cu = Zu[us].mean(0)
+            order = []
+            for u in us[np.argsort(np.linalg.norm(Zu[us] - cu, axis=1))]:
+                cand = unit_members[u][:3]
+                order.append(next((i for i in cand if len(rows[i]["text"] or "") >= 40), max(cand, key=lambda i: len(rows[i]["text"] or ""))))
+            order = np.array(order, dtype=int)
+        else:
+            cent_z = Z[m].mean(0)
+            order = m[np.argsort(np.linalg.norm(Z[m] - cent_z, axis=1))]
         pts = XY[m]
         c = np.median(pts, axis=0)
         rad = float(np.percentile(np.linalg.norm(pts - c, axis=1), 80))
@@ -515,7 +600,7 @@ def main():
         "threads": threads,
         "authors": authors,
         "activity": {"t0": t_lo, "step": 3600, "series": act.tolist()},
-        "model": MODEL_KEY,
+        "model": args.model,
         "label_model": None if args.no_labels else LABEL_MODEL,
     }
     json.dump(atlas, open(out / "atlas.json", "w"), separators=(",", ":"))

@@ -35,6 +35,13 @@ type PendingPost struct {
 // PendingEmbeddings returns up to limit posts created at or after sinceMS that lack an
 // embedding for model and have some text to embed.
 func (d *DB) PendingEmbeddings(ctx context.Context, model string, sinceMS int64, limit int) ([]PendingPost, error) {
+	return d.PendingEmbeddingsWith(ctx, model, sinceMS, limit, true)
+}
+
+// PendingEmbeddingsWith is PendingEmbeddings with a choice of text recipe: with threadContext a
+// reply's text starts with a snippet of its thread's first post; without it a post is embedded
+// from its own words alone.
+func (d *DB) PendingEmbeddingsWith(ctx context.Context, model string, sinceMS int64, limit int, threadContext bool) ([]PendingPost, error) {
 	rows, err := d.QueryContext(ctx, `
 		SELECT p.uri, p.text, p.embed_text, p.reply_root, COALESCE(r.text, '') FROM posts p
 		LEFT JOIN embeddings e ON e.uri = p.uri AND e.model = ?
@@ -55,7 +62,7 @@ func (d *DB) PendingEmbeddings(ctx context.Context, model string, sinceMS int64,
 		doc := DocText(text, et)
 		// A reply on its own ("o7", "hi") says little. Prefix a snippet of the thread's first
 		// post so a conversation lands together on the map.
-		if root != "" && strings.TrimSpace(rootText) != "" {
+		if threadContext && root != "" && strings.TrimSpace(rootText) != "" {
 			doc = "[thread: " + snippet(rootText, 240) + "]\n" + doc
 		}
 		out = append(out, PendingPost{URI: uri, Doc: doc})

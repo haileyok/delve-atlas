@@ -36,7 +36,12 @@ func run() error {
 	batch := flag.Int("batch", 32, "inputs per Ollama request")
 	workers := flag.Int("workers", 4, "requests in flight")
 	model := flag.String("model", "nomic-embed-text", "Ollama embedding model")
+	prefix := flag.String("prefix", "\x00", "task prefix put before every text (default: the one the model expects)")
+	recipe := flag.String("recipe", "thread1", "text recipe: thread1 (a reply starts with a snippet of its thread's first post) or post (own words only)")
 	flag.Parse()
+	if *recipe != "thread1" && *recipe != "post" {
+		return fmt.Errorf("unknown -recipe %q (want thread1 or post)", *recipe)
+	}
 
 	db, err := store.Open(*dbPath)
 	if err != nil {
@@ -49,12 +54,15 @@ func run() error {
 	cl := embed.New(os.Getenv("OLLAMA_URL"), *model)
 	// The stored model name also records how the document text is built, so changing that
 	// recipe means re-embedding rather than mixing incompatible vectors.
-	cl.Key = *model + "+thread1"
+	cl.Key = *model + "+" + *recipe
+	if *prefix != "\x00" {
+		cl.Prefix = *prefix
+	}
 
 	var total atomic.Int64
 	for {
 		since := time.Now().Add(-time.Duration(*days * 24 * float64(time.Hour))).UnixMilli()
-		pending, err := db.PendingEmbeddings(ctx, cl.Key, since, 4000)
+		pending, err := db.PendingEmbeddingsWith(ctx, cl.Key, since, 4000, *recipe == "thread1")
 		if err != nil {
 			return err
 		}

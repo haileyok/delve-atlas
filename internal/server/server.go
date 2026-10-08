@@ -31,9 +31,14 @@ type Server struct {
 	// Agent, when set, serves the documented JSON API for agents (/api/v1/*), /AGENTS.md and
 	// /llms.txt.
 	Agent *agentapi.API
+	// PublicURL is the site's address (https://example.com), used for the absolute URLs in the
+	// page's social tags. Empty means: take it from the request (X-Forwarded-Host, Host).
+	PublicURL string
 
-	mu       sync.Mutex
-	activity cached
+	mu        sync.Mutex
+	activity  cached
+	metaMu    sync.Mutex
+	metaCache metaCache
 }
 
 type cached struct {
@@ -58,6 +63,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/post", s.post)
 	mux.HandleFunc("GET /api/thread", s.thread)
 	mux.HandleFunc("GET /api/activity", s.activityHandler)
+	mux.HandleFunc("GET /og.jpg", s.ogImage)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok") })
 	if s.Agent != nil {
 		s.Agent.Register(mux)
@@ -76,14 +82,22 @@ func (s *Server) static() http.Handler {
 		if name == "" {
 			name = "index.html"
 		}
+		if name == "index.html" {
+			s.serveIndex(w, r)
+			return
+		}
 		if b, err := fs.ReadFile(s.Web, name); err == nil {
-			sum := sha256.Sum256(b)
 			// weak, because the body may be sent gzip-compressed
-			w.Header().Set("ETag", `W/"`+hex.EncodeToString(sum[:8])+`"`)
+			w.Header().Set("ETag", `W/"`+hashOf(b)+`"`)
 		}
 		w.Header().Set("Cache-Control", "no-cache")
 		files.ServeHTTP(w, r)
 	})
+}
+
+func hashOf(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:8])
 }
 
 func (s *Server) latestID() (string, error) {
@@ -260,7 +274,7 @@ func gzipMW(next http.Handler) http.Handler {
 		w.Header().Add("Vary", "Accept-Encoding")
 		// Range requests and clients without gzip pass through; so do formats that don't shrink.
 		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") || r.Header.Get("Range") != "" ||
-			strings.HasSuffix(r.URL.Path, ".f32") || strings.HasSuffix(r.URL.Path, ".png") {
+			strings.HasSuffix(r.URL.Path, ".f32") || strings.HasSuffix(r.URL.Path, ".png") || strings.HasSuffix(r.URL.Path, ".jpg") {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -1,6 +1,6 @@
 // Reports how many labels are visible at each zoom level and whether any overlap.
 export default async (page) => {
-  await page.goto('http://127.0.0.1:8088/');
+  await page.goto((process.env.BASE ?? 'http://127.0.0.1:8088') + '/');
   await page.waitFor('window.__atlas && window.__atlas.D');
   await page.wait(1000);
   const rows = [];

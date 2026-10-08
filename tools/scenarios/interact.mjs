@@ -1,7 +1,7 @@
 // Drives the UI like a user would and reports what each step did.
 export default async (page) => {
   const out = {};
-  await page.goto('http://127.0.0.1:8088/');
+  await page.goto((process.env.BASE ?? 'http://127.0.0.1:8088') + '/');
   await page.waitFor('window.__atlas && window.__atlas.D');
   await page.wait(1200);
 

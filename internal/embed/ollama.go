@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -26,6 +27,19 @@ type Client struct {
 	HTTP   *http.Client
 }
 
+// DefaultPrefix is the task prefix a model expects in front of text that will be grouped.
+// Most embedding models take none; nomic-embed-text and embeddinggemma are trained with one.
+func DefaultPrefix(model string) string {
+	m := strings.ToLower(model)
+	switch {
+	case strings.HasPrefix(m, "nomic-embed-text"):
+		return "clustering: "
+	case strings.HasPrefix(m, "embeddinggemma"):
+		return "task: clustering | query: "
+	}
+	return ""
+}
+
 // New returns a client with defaults filled in.
 func New(baseURL, model string) *Client {
 	if baseURL == "" {
@@ -35,7 +49,7 @@ func New(baseURL, model string) *Client {
 		model = "nomic-embed-text"
 	}
 	return &Client{
-		BaseURL: baseURL, Model: model, Prefix: "clustering: ",
+		BaseURL: baseURL, Model: model, Prefix: DefaultPrefix(model),
 		HTTP: &http.Client{Timeout: 5 * time.Minute},
 	}
 }

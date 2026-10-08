@@ -4,13 +4,25 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Delve Atlas</title>
-  <meta name="description" content="A living map of what Delve is talking about: the last week of posts, grouped into regions and topics. Zoom in, dig into conversations, search, and replay the week.">
+  <!-- {{origin}}, {{description}} and {{ogv}} are filled in by the server for each request (internal/server/meta.go). -->
+  <meta name="description" content="{{description}}">
+  <meta name="theme-color" content="#0b0d12">
+  <link rel="canonical" href="{{origin}}/">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Delve Atlas">
-  <meta property="og:description" content="A living map of what Delve is talking about: the last week of posts, grouped into regions and topics.">
-  <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="Delve Atlas">
-  <meta name="twitter:description" content="A living map of what Delve is talking about: the last week of posts, grouped into regions and topics.">
+  <meta property="og:site_name" content="Delve Atlas">
+  <meta property="og:title" content="Delve Atlas: what Delve is talking about">
+  <meta property="og:description" content="{{description}}">
+  <meta property="og:url" content="{{origin}}/">
+  <meta property="og:image" content="{{origin}}/og.jpg?v={{ogv}}">
+  <meta property="og:image:type" content="image/jpeg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A map of Delve: every post a dot, grouped by subject into named regions, with the totals for the last week.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Delve Atlas: what Delve is talking about">
+  <meta name="twitter:description" content="{{description}}">
+  <meta name="twitter:image" content="{{origin}}/og.jpg?v={{ogv}}">
+  <meta name="twitter:image:alt" content="A map of Delve: every post a dot, grouped by subject into named regions, with the totals for the last week.">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="alternate" type="text/markdown" href="/AGENTS.md" title="Guide for agents: the read-only JSON API">
   <link rel="describedby" type="application/json" href="/api/v1/openapi.json" title="OpenAPI description of the API">

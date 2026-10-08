@@ -143,6 +143,37 @@ every endpoint. Run the same check against a live server with `node tools/agent-
   ("o7"). Each reply is embedded with a snippet of its thread's first post so conversations land
   together on the map. The embedding row's model key records this recipe (`…+thread1`), so
   changing it means re-embedding rather than mixing vectors.
+- **Conversations are what gets clustered, not posts.** 87% of posts are replies and 90% sit in
+  about 600 threads, so clustering single posts made most topics a single big thread (80% of topics
+  had over half their posts from one thread) and a reply landed in its parent's topic only 75% of
+  the time. `pipeline/conversations.py` groups posts into *conversation units*: a post joins its
+  parent's unit until that unit holds 20 posts, then starts a new one (the longest "threads" are
+  100-deep chains that wander through many subjects, so they are cut into stretches). Each unit is
+  embedded as a transcript of its posts (account names left out, they pull topics toward one
+  voice), HDBSCAN finds topics among the units (EOM selection, minimum size about units/250), and
+  every post inherits its unit's topic. Conversations the clusterer calls noise join the nearest
+  topic if they are about as close to its centre as its less typical members. On the map each unit
+  is a small spiral of its posts, oldest at the centre, so a conversation is a visible cluster
+  (`cols.json` has a `conv` column with the unit of each post). `build_atlas.py --unit post` is the
+  old behaviour. On a 3.5k-post sample, versus clustering posts: a reply shares its parent's topic
+  98% of the time (was 75%), topics draw on about 3 conversations (was 1.6), keyword coherence is
+  3x higher, and a model judge rates the topics within 0.1 of the post-based ones once weighted by
+  posts (3.95 against 4.05 of 5).
+- **The embedding model was not the weak point.** nomic-embed-text, mxbai-embed-large,
+  embeddinggemma, qwen3-embedding (0.6B and 4B), bge-m3 and snowflake-arctic-embed2 all landed
+  within the judge's noise of each other, both for posts and for conversation transcripts, so the
+  site keeps nomic (the smallest, and the one search already uses). To try another:
+  `bin/embed -model <ollama model> -days 7`, then `UNIT_MODEL=<model>` for the transcripts. The
+  embeddings table keys vectors by (post, model), so models can sit side by side.
+- **Measuring a change.** `pipeline/diagnose.py <snapshot> --db data/delve.db [--judge 200
+  --judge-pairs 20] [--compare <other snapshot>]` reports, per snapshot: how many separate
+  conversations feed each topic, how often a thread or a reply is split across topics, how
+  concentrated topics are in one account, keyword coherence, near-duplicate topics, and (with
+  `--judge`, needs `AGW_KEY`) a model's rating of every topic and of the most similar pairs. Two
+  traps: the judge rewards topics that are one thread (ten posts from one conversation always
+  look coherent), so compare at the same topic count and read the structural numbers beside it; and
+  a 30-topic sample is too noisy (about +-0.15), so judge every topic. Run the Python tests with
+  `cd pipeline && uv run python -m unittest`.
 - **Labelling can fail quietly, so it retries.** The gateway models are reasoning models whose
   thinking counts against `max_tokens`. One was seen spending a whole 4,000-token budget counting
   the words of its own summary and returning nothing. `chat_json` retries with a bigger budget and
@@ -185,8 +216,30 @@ numbers change when the map is rebuilt, thread, post and account links don't.
 
 The pages work on phones: the outline starts collapsed and a tapped post opens as a bottom sheet.
 
+### Link previews
+
+Pasting the address into Bluesky, Slack, Discord, iMessage and the like shows a 1200x630 card: the
+current map (every post a dot, in the site's colours), the largest regions named on it, and the
+title and totals. It is drawn from the newest snapshot, not made once by hand:
+
+- `web/static/og/card.html` + `card.js` draw it (Inter is bundled next to them, OFL licensed);
+  `tools/og.mjs` opens that page in headless Chromium and saves the screenshot to
+  `data/atlas/<snapshot>/og.jpg`. `scripts/rebuild-loop.sh` runs it after every map build; if the
+  render fails it only warns, and the site keeps showing the last card. It is a JPEG because
+  thousands of anti-aliased dots make a lossless PNG over 500 KB and some chat apps drop previews
+  above about 300 KB; with ImageMagick installed it is encoded at quality 90 with full colour
+  (about 250 KB), without it the browser's own JPEG is used (slightly softer).
+- The server serves it at `/og.jpg` (newest snapshot's card, else the most recent one that has a
+  card, else `web/static/og/default.jpg`, which ships with the site so a preview always has an image).
+- `index.html` carries `og:*`, `twitter:*` (`summary_large_image`) and `canonical` tags. The server
+  fills in three placeholders per request: the absolute origin (from `X-Forwarded-Host` and
+  `X-Forwarded-Proto`, which a Cloudflare tunnel sets, else `Host`; or `-public-url` to pin it), a
+  one-sentence description of the current map (counts and the biggest regions), and the map's id as
+  `?v=` on the image URL so previews refresh after a rebuild. Anything inserted is HTML-escaped and
+  a host that is not a plain host name is ignored.
+- Render one by hand: `node tools/og.mjs --base http://127.0.0.1:8088 --out card.jpg`.
+
 ## Not done yet
 
 - Jev-based labels (the broad/sub topic taxonomy and tone/substance signals that topic-feed uses)
   as an extra way to colour and filter posts, alongside the unsupervised clusters.
-- A share-card image for link previews (the page has title and description tags only).

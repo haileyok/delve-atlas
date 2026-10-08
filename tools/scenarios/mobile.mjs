@@ -2,7 +2,7 @@
 // on a point should open the detail drawer without errors.
 export const options = { width: 390, height: 844 };
 export default async (page) => {
-  await page.goto('http://127.0.0.1:8088/');
+  await page.goto((process.env.BASE ?? 'http://127.0.0.1:8088') + '/');
   await page.waitFor('window.__atlas && window.__atlas.D');
   await page.wait(1000);
   const out = {};

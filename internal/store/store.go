@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -95,11 +96,14 @@ CREATE TRIGGER IF NOT EXISTS posts_fts_au AFTER UPDATE ON posts BEGIN
 	INSERT INTO posts_fts(rowid, text, embed_text, tags) VALUES (new.rowid, new.text, new.embed_text, new.tags);
 END;
 
+-- One vector per post per model key, so a new embedding model can be tried (or switched to)
+-- without discarding the vectors the live site searches with.
 CREATE TABLE IF NOT EXISTS embeddings (
-	uri   TEXT PRIMARY KEY,
+	uri   TEXT NOT NULL,
 	model TEXT NOT NULL,
 	dim   INTEGER NOT NULL,
-	vec   BLOB NOT NULL
+	vec   BLOB NOT NULL,
+	PRIMARY KEY (uri, model)
 );
 `
 
@@ -131,8 +135,59 @@ func Open(path string) (*DB, error) {
 	return &DB{d}, nil
 }
 
+// migrateEmbeddingsKey rebuilds an embeddings table that was keyed by post alone (which let a
+// second model overwrite the first) so it is keyed by (post, model). Every process opens the
+// database, so the check is repeated inside an immediate transaction: whoever gets the write
+// lock first migrates and the rest find nothing to do.
+func migrateEmbeddingsKey(d *sql.DB) error {
+	ctx := context.Background()
+	conn, err := d.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	keyedByModel := func() (bool, error) {
+		var pk int
+		err := conn.QueryRowContext(ctx, `SELECT pk FROM pragma_table_info('embeddings') WHERE name = 'model'`).Scan(&pk)
+		return pk > 0, err
+	}
+	if ok, err := keyedByModel(); err != nil || ok {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			conn.ExecContext(ctx, `ROLLBACK`)
+		}
+	}()
+	if ok, err := keyedByModel(); err != nil || ok {
+		return err
+	}
+	for _, q := range []string{
+		`ALTER TABLE embeddings RENAME TO embeddings_old`,
+		`CREATE TABLE embeddings (
+			uri TEXT NOT NULL, model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL,
+			PRIMARY KEY (uri, model))`,
+		`INSERT INTO embeddings(uri, model, dim, vec) SELECT uri, model, dim, vec FROM embeddings_old`,
+		`DROP TABLE embeddings_old`,
+		`COMMIT`,
+	} {
+		if _, err := conn.ExecContext(ctx, q); err != nil {
+			return fmt.Errorf("%s: %w", strings.Fields(q)[0], err)
+		}
+	}
+	committed = true
+	return nil
+}
+
 // migrate adds columns that older databases lack.
 func migrate(d *sql.DB) error {
+	if err := migrateEmbeddingsKey(d); err != nil {
+		return fmt.Errorf("embeddings key: %w", err)
+	}
 	has := func(table, col string) (bool, error) {
 		rows, err := d.Query(`SELECT name FROM pragma_table_info(?)`, table)
 		if err != nil {

@@ -1,6 +1,6 @@
 // Loads the atlas, checks for errors, and reports what is on screen.
 export default async (page) => {
-  await page.goto('http://127.0.0.1:8088/');
+  await page.goto((process.env.BASE ?? 'http://127.0.0.1:8088') + '/');
   await page.waitFor('window.__atlas && window.__atlas.D');
   await page.wait(1500);
   const info = await page.eval(`(() => {

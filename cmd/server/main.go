@@ -38,6 +38,7 @@ func run() error {
 	addr := flag.String("addr", ":8080", "listen address")
 	webDir := flag.String("web", "", "serve the frontend from this directory (development)")
 	noSemantic := flag.Bool("no-semantic", false, "disable meaning-based search (/api/v1/search), which needs a local Ollama")
+	publicURL := flag.String("public-url", "", "the site's address (https://example.com) for link-preview tags; default: taken from each request")
 	embedModel := flag.String("embed-model", "nomic-embed-text", "Ollama model for search queries; must match the one the posts were embedded with")
 	flag.Parse()
 
@@ -52,7 +53,7 @@ func run() error {
 		static = os.DirFS(*webDir)
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	s := &server.Server{DB: db, AtlasDir: *atlasDir, Web: static, Log: log}
+	s := &server.Server{DB: db, AtlasDir: *atlasDir, Web: static, Log: log, PublicURL: *publicURL}
 
 	// The agent API. Search embeds each query with the same model and recipe the posts were
 	// embedded with (see cmd/embed), so the vectors are comparable.

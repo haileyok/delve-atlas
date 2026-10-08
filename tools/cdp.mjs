@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 function findChromium() {
   if (process.env.CHROMIUM) return process.env.CHROMIUM;
@@ -82,8 +83,8 @@ export async function withPage(fn, { width = 1600, height = 900, dpr = 1 } = {})
       },
       async wheel(x, y, dy) { await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: dy }); },
       async key(key) { await send('Input.dispatchKeyEvent', { type: 'keyDown', key }); await send('Input.dispatchKeyEvent', { type: 'keyUp', key }); },
-      async screenshot(path) {
-        const r = await send('Page.captureScreenshot', { format: 'png' });
+      async screenshot(path, { format = 'png', quality } = {}) {
+        const r = await send('Page.captureScreenshot', { format, ...(quality ? { quality } : {}) });
         writeFileSync(path, Buffer.from(r.data, 'base64'));
       },
     };
@@ -94,7 +95,8 @@ export async function withPage(fn, { width = 1600, height = 900, dpr = 1 } = {})
   }
 }
 
-if (process.argv[2]) {
+// Run a scenario when invoked directly (not when another script imports withPage).
+if (process.argv[2] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const mod = await import(new URL(process.argv[2], `file://${process.cwd()}/`));
   const out = await withPage(mod.default, mod.options ?? {});
   if (out !== undefined) console.log(typeof out === 'string' ? out : JSON.stringify(out, null, 2));

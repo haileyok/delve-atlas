@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<title>Delve Atlas card</title>
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<!-- The link-preview card: 1200x630, drawn from the newest map. tools/og.mjs screenshots this page
+     into og.png, which the server hands out as the page's og:image. -->
+<style>
+  @font-face { font-family: "Inter"; font-weight: 400; src: url(inter-latin-400.woff2) format("woff2"); }
+  @font-face { font-family: "Inter"; font-weight: 600; src: url(inter-latin-600.woff2) format("woff2"); }
+  @font-face { font-family: "Inter"; font-weight: 700; src: url(inter-latin-700.woff2) format("woff2"); }
+  @font-face { font-family: "Inter"; font-weight: 800; src: url(inter-latin-800.woff2) format("woff2"); }
+  html, body { margin: 0; background: #0b0d12; }
+  canvas { display: block; width: 1200px; height: 630px; }
+</style>
+</head>
+<body>
+<canvas id="card" width="1200" height="630"></canvas>
+<script type="module" src="card.js"></script>
+</body>
+</html>
