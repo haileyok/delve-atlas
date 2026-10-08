@@ -82,7 +82,7 @@ def umap_embed(X, n_components, n_neighbors, min_dist, seed=42):
     ).fit_transform(X)
 
 
-def cluster(Z, min_cluster_size, min_samples):
+def cluster(Z, min_cluster_size, min_samples, attach=1.5):
     from sklearn.cluster import HDBSCAN
 
     labels = HDBSCAN(
@@ -97,7 +97,7 @@ def cluster(Z, min_cluster_size, min_samples):
         return labels
     cent = np.stack([Z[labels == i].mean(0) for i in ids])
     spread = {i: np.linalg.norm(Z[labels == i] - cent[k], axis=1) for k, i in enumerate(ids)}
-    limit = {i: np.percentile(spread[i], 90) * 1.5 for i in ids}
+    limit = {i: np.percentile(spread[i], 90) * attach for i in ids}
     out = labels.copy()
     for j in np.where(labels == -1)[0]:
         d = np.linalg.norm(cent - Z[j], axis=1)
@@ -245,6 +245,8 @@ def main():
     ap.add_argument("--days", type=float, default=7)
     ap.add_argument("--min-cluster", type=int, default=0, help="HDBSCAN min cluster size (0 = auto)")
     ap.add_argument("--regions", type=int, default=0, help="number of regions (0 = auto)")
+    ap.add_argument("--min-samples", type=int, default=0, help="HDBSCAN min_samples (0 = auto)")
+    ap.add_argument("--attach", type=float, default=4.0, help="attach noise points within this many 90th-percentile radii of a topic")
     ap.add_argument("--no-labels", action="store_true")
     ap.add_argument("--workers", type=int, default=8)
     args = ap.parse_args()
@@ -267,9 +269,11 @@ def main():
     Z = umap_embed(X, 12, 20, 0.0)
     mcs = args.min_cluster or int(np.clip(round(n / 250), 12, 60))
     log(f"hdbscan min_cluster_size={mcs}")
-    topic_of = cluster(Z, mcs, max(5, mcs // 3))
+    topic_of = cluster(Z, mcs, args.min_samples or max(5, mcs // 8), args.attach)
     n_topics = len(set(topic_of) - {-1})
-    log(f"{n_topics} topics, {int((topic_of == -1).sum())} unclustered, {time.time() - t0:.0f}s")
+    sizes = sorted(np.bincount(topic_of[topic_of >= 0]).tolist(), reverse=True) if n_topics else []
+    log(f"{n_topics} topics, {int((topic_of == -1).sum())} unclustered, {time.time() - t0:.0f}s; "
+        f"sizes: max {sizes[:3]} median {sizes[len(sizes) // 2] if sizes else 0} min {sizes[-1] if sizes else 0}")
 
     target_regions = args.regions or int(np.clip(round(np.sqrt(max(n_topics, 1)) * 1.4), 3, 14))
     region_of_topic = make_regions(Z, topic_of, target_regions)
