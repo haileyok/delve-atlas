@@ -42,6 +42,10 @@ function start(D) {
     hot: null,
   };
 
+  // On a phone the outline is an overlay: start with it closed so the map is what you see first.
+  const isSmall = () => window.matchMedia('(max-width: 800px)').matches;
+  if (isSmall()) document.body.classList.add('no-sidebar');
+
   // ---------------------------------------------------------------- header
   const a = D.atlas;
   $('#meta').textContent = `${fmt.format(a.n_posts)} posts · ${fmt.format(a.n_authors)} accounts · ${a.window_days} days · map built ${ago(a.built_at)}`;
@@ -167,6 +171,7 @@ function start(D) {
   }
 
   function select(sel, { fly = true, hash = true } = {}) {
+    if (sel && isSmall()) document.body.classList.add('no-sidebar'); // get the overlay out of the way
     S.sel = sel;
     S.hot = null;
     S.edges = null;

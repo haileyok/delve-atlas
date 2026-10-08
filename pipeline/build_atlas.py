@@ -178,32 +178,38 @@ AGW_URL = os.environ.get("AGW_URL", "https://agw.noclues.net")
 LABEL_MODEL = os.environ.get("LABEL_MODEL", "deepseek-v4.1-flash")
 
 
-def chat_json(prompt: str, retries=3) -> dict | None:
+FALLBACK_MODEL = os.environ.get("LABEL_FALLBACK_MODEL", "glm-5.3-flash")
+
+# (model, max_tokens). These are reasoning models and the thinking counts against the budget: a
+# model can burn all of a small budget deliberating (it has been seen counting the words of its
+# own summary) and return nothing, so retry with more room and then with the other model.
+ATTEMPTS = [(None, 4000), (None, 12000), ("fallback", 8000), ("fallback", 16000)]
+
+
+def chat_json(prompt: str) -> dict | None:
     import httpx
 
     key = os.environ.get("AGW_KEY", "")
     if not key:
         return None
-    for attempt in range(retries):
+    for attempt, (which, budget) in enumerate(ATTEMPTS):
+        model = FALLBACK_MODEL if which == "fallback" else LABEL_MODEL
         try:
             r = httpx.post(
                 f"{AGW_URL}/v1/chat/completions",
                 headers={"x-agw-key": key},
-                json={
-                    "model": LABEL_MODEL,
-                    # these are reasoning models: the thinking counts against the budget
-                    "max_tokens": 4000,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-                timeout=120,
+                json={"model": model, "max_tokens": budget, "messages": [{"role": "user", "content": prompt}]},
+                timeout=180,
             )
             r.raise_for_status()
-            text = r.json()["choices"][0]["message"].get("content") or ""
+            choice = r.json()["choices"][0]
+            text = choice["message"].get("content") or ""
             m = re.search(r"\{.*\}", text, re.S)
             if m:
                 return json.loads(m.group(0))
+            log(f"label call gave no JSON (model={model} finish={choice.get('finish_reason')} budget={budget}); retrying")
         except Exception as e:  # noqa: BLE001
-            log("label call failed", attempt, repr(e)[:160])
+            log(f"label call failed (model={model}):", repr(e)[:160])
             time.sleep(2 * (attempt + 1))
     return None
 

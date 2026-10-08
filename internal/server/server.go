@@ -52,8 +52,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/thread", s.thread)
 	mux.HandleFunc("GET /api/activity", s.activityHandler)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok") })
-	mux.Handle("/", http.FileServerFS(s.Web))
+	mux.Handle("/", staticCache(http.FileServerFS(s.Web)))
 	return gzipMW(mux)
+}
+
+// staticCache lets browsers reuse the site's own files for a few minutes (the embedded files
+// carry no modification time, so they would otherwise be refetched on every load).
+func staticCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) latestID() (string, error) {
