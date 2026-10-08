@@ -7,7 +7,7 @@ in float a_ts;
 in vec4 a_color;
 in float a_state;
 uniform vec2 u_center;
-uniform vec2 u_scale;      // clip units per layout unit (y already flipped)
+uniform vec2 u_scale;      // clip units per layout unit; both axes point the same way as the layout
 uniform float u_size;      // base sprite size in device px
 uniform float u_zoom;
 uniform float u_t0;
@@ -133,7 +133,9 @@ export class PointRenderer {
     gl.useProgram(this.prog);
     gl.bindVertexArray(this.vao);
     gl.uniform2f(this.u.u_center, cam.cx, cam.cy);
-    gl.uniform2f(this.u.u_scale, (2 * cam.scale) / cam.w, (-2 * cam.scale) / cam.h);
+    // Clip space already has y pointing up, the same as the layout and Camera.toScreen, so
+    // neither axis is flipped here. (Flipping y put the dots at the mirror image of the labels.)
+    gl.uniform2f(this.u.u_scale, (2 * cam.scale) / cam.w, (2 * cam.scale) / cam.h);
     gl.uniform1f(this.u.u_size, 3.2 * cam.dpr);
     gl.uniform1f(this.u.u_zoom, cam.zoomSize);
     gl.uniform1f(this.u.u_t0, this.t0 - 0.5);
