@@ -1,0 +1,16 @@
+[Unit]
+Description=Delve Atlas: one map rebuild (resolve, embed, layout, labels, prune)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+EnvironmentFile=-%h/.config/delve-atlas/env
+# uv lives in the nix profile, which user units do not have on PATH by default.
+Environment=PATH=%h/.nix-profile/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+ExecStart=@REPO@/scripts/rebuild-loop.sh once
+# The layout step is CPU heavy; keep it from starving Ollama and the web server.
+Nice=10
+TimeoutStartSec=3h

@@ -58,12 +58,42 @@ make build
 make ingest      # first run replays 7 days from the archive, then tails live; resumable
 make embed       # embeds new posts as they arrive        (separate terminal / service)
 make resolve     # fills in handles and display names     (separate terminal / service)
-scripts/rebuild-loop.sh   # rebuild the atlas every 3h (or `make atlas` for one pass)
+scripts/rebuild-loop.sh   # rebuild the atlas every 3h (or `make atlas` for one pass); see "As systemd services" below
 make serve       # http://localhost:8080
 ```
 
 `make atlas` is also the first thing to run once the backfill has finished. The server serves the
 newest snapshot, so a rebuild needs no restart; reload the page.
+
+### As systemd services
+
+To keep it running across logouts and reboots, install the units in `deploy/systemd/` as
+**user** services (no root; run `loginctl enable-linger $USER` once so they start at boot):
+
+```bash
+deploy/install.sh            # build, install, enable and start everything
+deploy/install.sh restart    # after pulling changes: rebuild binaries, restart the services
+```
+
+| unit | what it runs |
+|---|---|
+| `delve-ingest.service` | Jetstream replay, then live tail (resumes from its saved cursor) |
+| `delve-embed.service` | embeds new posts with Ollama |
+| `delve-resolve.service` | fills in handles and display names |
+| `delve-atlas-web.service` | the site and API on `127.0.0.1:8088` |
+| `delve-rebuild.timer` → `delve-rebuild.service` | one map rebuild every 3 hours (00:15, 03:15, ...) |
+
+Secrets stay in `~/.config/delve-atlas/env`, which every unit reads. Day to day:
+
+```bash
+systemctl --user status 'delve-*'
+journalctl --user -u delve-atlas-web -f
+systemctl --user start delve-rebuild.service   # rebuild now
+systemctl --user list-timers delve-rebuild.timer
+```
+
+Ollama and the tunnel are expected to run separately (for example as system services). The units
+don't depend on them: if Ollama is down, `/api/v1/search` answers 503 and embedding resumes when it is back.
 
 ## For agents
 

@@ -1,0 +1,15 @@
+[Unit]
+Description=Delve Atlas: embed new posts with Ollama
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+EnvironmentFile=-%h/.config/delve-atlas/env
+ExecStart=@REPO@/bin/embed -watch
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

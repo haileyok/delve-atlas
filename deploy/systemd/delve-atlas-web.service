@@ -1,0 +1,15 @@
+[Unit]
+Description=Delve Atlas: web server and agent API on 127.0.0.1:8088
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+EnvironmentFile=-%h/.config/delve-atlas/env
+ExecStart=@REPO@/bin/server -addr 127.0.0.1:8088
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

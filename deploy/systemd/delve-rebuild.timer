@@ -1,0 +1,10 @@
+[Unit]
+Description=Delve Atlas: rebuild the map every 3 hours
+
+[Timer]
+# 00:15, 03:15, ... in the machine's time zone. Persistent runs a missed build once after downtime.
+OnCalendar=*-*-* 00/3:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
